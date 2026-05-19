@@ -1,0 +1,1 @@
+{"name": "webrtc-pro-chat","version": "1.0.0","description": "Professional WebRTC Video Chat with Signaling Server","main": "server.js","dependencies": {"express": "^4.18.2","socket.io": "^4.7.2"},"scripts": {"start": "node server.js"}}
