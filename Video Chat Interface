@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StreamLine RTC</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        .video-container { position: relative; width: 100%; aspect-ratio: 16/9; background: #1e293b; border-radius: 12px; overflow: hidden; }
+        #localVideo { position: absolute; bottom: 1rem; right: 1rem; width: 25%; border: 2px solid #3b82f6; z-index: 10; }
+        #remoteVideo { width: 100%; height: 100%; object-fit: cover; }
+        .hidden { display: none !important; }
+        .glass-panel { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen font-sans">
+    <!-- Chosen Palette: Midnight Professional -->
+    <!-- Application Structure Plan: The application follows a three-state information architecture: Identification, Discovery, and Engagement. The "Login" view establishes identity; the "Lobby" serves as a dashboard for peer discovery; the "Call" view is an immersive, high-utility environment. This structure minimizes cognitive load by isolating tasks and providing clear transitions during the WebRTC handshake process. -->
+    <!-- Visualization & Content Choices: Real-time user lists -> Interactive Grid -> Facilitates P2P selection. Video Streams -> Canvas-based rendering (Native Video element) -> Provides primary communication. Chat Feed -> Dynamic DOM updates -> Supplements visual interaction. No SVG or Mermaid used as per constraints. -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+
+    <div id="app" class="container mx-auto px-4 py-8 max-w-5xl">
+        <header class="flex justify-between items-center mb-12">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-xl">S</div>
+                <h1 class="text-2xl font-bold tracking-tight">StreamLine <span class="text-blue-500">RTC</span></h1>
+            </div>
+            <div id="user-badge" class="hidden glass-panel px-4 py-2 rounded-full border border-slate-700">
+                <span id="display-name" class="text-sm font-medium"></span>
+            </div>
+        </header>
+
+        <section id="view-login" class="max-w-md mx-auto py-20">
+            <div class="bg-slate-800 p-8 rounded-2xl border border-slate-700 shadow-2xl">
+                <h2 class="text-xl font-semibold mb-2">Welcome Back</h2>
+                <p class="text-slate-400 text-sm mb-6">Enter your name to start discovering peers.</p>
+                <input type="text" id="input-username" placeholder="Your Name" class="w-full bg-slate-900 border border-slate-700 rounded-xl p-4 mb-4 focus:ring-2 focus:ring-blue-500 outline-none transition-all">
+                <button onclick="handleJoin()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl shadow-lg shadow-blue-900/20 transition-all">Enter Lobby</button>
+            </div>
+        </section>
+
+        <section id="view-lobby" class="hidden">
+            <div class="grid md:grid-cols-3 gap-8">
+                <div class="md:col-span-2">
+                    <h2 class="text-xl font-bold mb-6 flex items-center gap-2">Available Peers <span id="peer-count" class="bg-blue-600 text-xs px-2 py-1 rounded-full">0</span></h2>
+                    <div id="user-list" class="grid sm:grid-cols-2 gap-4"></div>
+                </div>
+                <div class="glass-panel p-6 rounded-2xl border border-slate-700 h-fit">
+                    <h3 class="font-bold mb-4">Quick Tips</h3>
+                    <ul class="text-sm text-slate-400 space-y-3">
+                        <li>• Grant camera access when prompted.</li>
+                        <li>• Use headphones to prevent echo.</li>
+                        <li>• Ensure your connection is stable.</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <section id="view-call" class="hidden space-y-6">
+            <div class="grid lg:grid-cols-3 gap-6">
+                <div class="lg:col-span-2 space-y-4">
+                    <div class="video-container shadow-2xl border border-slate-700">
+                        <video id="remoteVideo" autoplay playsinline></video>
+                        <video id="localVideo" autoplay muted playsinline class="rounded-lg shadow-xl"></video>
+                    </div>
+                    
+                    <div class="flex justify-center items-center gap-4 py-4 glass-panel rounded-2xl border border-slate-700">
+                        <button id="btn-toggle-audio" onclick="toggleAudio()" class="w-12 h-12 flex items-center justify-center bg-slate-700 hover:bg-slate-600 rounded-full transition-all">Mic</button>
+                        <button id="btn-toggle-video" onclick="toggleVideo()" class="w-12 h-12 flex items-center justify-center bg-slate-700 hover:bg-slate-600 rounded-full transition-all">Cam</button>
+                        <button onclick="handleEndCall()" class="px-8 h-12 flex items-center justify-center bg-red-600 hover:bg-red-500 rounded-full font-bold transition-all">End Call</button>
+                    </div>
+                </div>
+
+                <div class="flex flex-col h-[500px] lg:h-auto glass-panel rounded-2xl border border-slate-700 overflow-hidden">
+                    <div class="p-4 border-b border-slate-700 font-bold">Live Chat</div>
+                    <div id="chat-messages" class="flex-grow p-4 overflow-y-auto space-y-3 text-sm"></div>
+                    <div class="p-4 bg-slate-800/50">
+                        <div class="flex gap-2">
+                            <input type="text" id="chat-input" placeholder="Type a message..." class="flex-grow bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm outline-none">
+                            <button onclick="sendChat()" class="bg-blue-600 px-4 py-2 rounded-lg font-bold text-sm">Send</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <div id="modal-incoming" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+        <div class="bg-slate-800 p-8 rounded-2xl border border-slate-700 max-w-sm w-full text-center">
+            <div class="w-20 h-20 bg-blue-600 rounded-full mx-auto mb-6 flex items-center justify-center text-3xl font-bold animate-pulse">?</div>
+            <h3 id="incoming-name" class="text-xl font-bold mb-2">Unknown</h3>
+            <p class="text-slate-400 mb-8">is calling you...</p>
+            <div class="flex gap-4">
+                <button onclick="declineCall()" class="flex-1 bg-slate-700 py-3 rounded-xl font-bold">Decline</button>
+                <button onclick="acceptCall()" class="flex-1 bg-green-600 py-3 rounded-xl font-bold">Accept</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let myName = '';
+        let targetId = null;
+        let localStream = null;
+        let peerConnection = null;
+        let isAudioOn = true;
+        let isVideoOn = true;
+
+        const iceConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+        const views = {
+            login: document.getElementById('view-login'),
+            lobby: document.getElementById('view-lobby'),
+            call: document.getElementById('view-call')
+        };
+
+        function showView(viewId) {
+            Object.values(views).forEach(v => v.classList.add('hidden'));
+            views[viewId].classList.remove('hidden');
+        }
+
+        function handleJoin() {
+            const input = document.getElementById('input-username');
+            if (!input.value) return;
+            myName = input.value;
+            socket.emit('join', myName);
+            document.getElementById('display-name').innerText = myName;
+            document.getElementById('user-badge').classList.remove('hidden');
+            showView('lobby');
+        }
+
+        socket.on('user-list', (users) => {
+            const container = document.getElementById('user-list');
+            const count = document.getElementById('peer-count');
+            const others = users.filter(([id]) => id !== socket.id);
+            count.innerText = others.length;
+            
+            container.innerHTML = others.map(([id, name]) => `
+                <div class="bg-slate-800 border border-slate-700 p-4 rounded-xl flex justify-between items-center">
+                    <div>
+                        <div class="font-bold">${name}</div>
+                        <div class="text-xs text-green-500 flex items-center gap-1">Available</div>
+                    </div>
+                    <button onclick="initiateCall('${id}', '${name}')" class="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm font-bold transition-colors">Call</button>
+                </div>
+            `).join('');
+        });
+
+        async function initiateCall(id, name) {
+            targetId = id;
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                document.getElementById('localVideo').srcObject = localStream;
+                socket.emit('request-call', { to: id, fromName: myName });
+                createPeerConnection();
+            } catch (err) {
+                alert('Could not access camera/mic');
+            }
+        }
+
+        socket.on('incoming-call', ({ from, fromName }) => {
+            targetId = from;
+            document.getElementById('incoming-name').innerText = fromName;
+            document.getElementById('modal-incoming').classList.remove('hidden');
+        });
+
+        async function acceptCall() {
+            document.getElementById('modal-incoming').classList.add('hidden');
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                document.getElementById('localVideo').srcObject = localStream;
+                showView('call');
+                createPeerConnection();
+                socket.emit('accept-call', { to: targetId });
+            } catch (err) {
+                alert('Device access denied');
+            }
+        }
+
+        function declineCall() {
+            document.getElementById('modal-incoming').classList.add('hidden');
+            targetId = null;
+        }
+
+        socket.on('call-accepted', async () => {
+            showView('call');
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            socket.emit('signal', { to: targetId, signal: offer });
+        });
+
+        function createPeerConnection() {
+            peerConnection = new RTCPeerConnection(iceConfig);
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+            peerConnection.onicecandidate = (event) => {
+                if (event.candidate) {
+                    socket.emit('signal', { to: targetId, signal: { candidate: event.candidate } });
+                }
+            };
+
+            peerConnection.ontrack = (event) => {
+                document.getElementById('remoteVideo').srcObject = event.streams[0];
+            };
+        }
+
+        socket.on('signal', async ({ signal }) => {
+            if (!peerConnection) return;
+
+            if (signal.type === 'offer') {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
+                const answer = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answer);
+                socket.emit('signal', { to: targetId, signal: answer });
+            } else if (signal.type === 'answer') {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
+            } else if (signal.candidate) {
+                await peerConnection.addIceCandidate(new RTCIceCandidate(signal.candidate));
+            }
+        });
+
+        function toggleAudio() {
+            isAudioOn = !isAudioOn;
+            localStream.getAudioTracks()[0].enabled = isAudioOn;
+            document.getElementById('btn-toggle-audio').innerText = isAudioOn ? 'Mic' : 'Muted';
+            document.getElementById('btn-toggle-audio').className = isAudioOn ? 
+                'w-12 h-12 flex items-center justify-center bg-slate-700 rounded-full' : 
+                'w-12 h-12 flex items-center justify-center bg-red-600 rounded-full';
+        }
+
+        function toggleVideo() {
+            isVideoOn = !isVideoOn;
+            localStream.getVideoTracks()[0].enabled = isVideoOn;
+            document.getElementById('btn-toggle-video').innerText = isVideoOn ? 'Cam' : 'Off';
+            document.getElementById('btn-toggle-video').className = isVideoOn ? 
+                'w-12 h-12 flex items-center justify-center bg-slate-700 rounded-full' : 
+                'w-12 h-12 flex items-center justify-center bg-red-600 rounded-full';
+        }
+
+        function sendChat() {
+            const input = document.getElementById('chat-input');
+            const msg = input.value.trim();
+            if (!msg) return;
+            socket.emit('chat-msg', { to: targetId, msg, sender: myName });
+            appendMsg('You', msg, true);
+            input.value = '';
+        }
+
+        socket.on('chat-msg', ({ msg, sender }) => {
+            appendMsg(sender, msg, false);
+        });
+
+        function appendMsg(sender, msg, isMe) {
+            const container = document.getElementById('chat-messages');
+            const div = document.createElement('div');
+            div.className = `p-3 rounded-lg ${isMe ? 'bg-blue-600/20 ml-8 border-l-2 border-blue-500' : 'bg-slate-800 mr-8 border-l-2 border-slate-600'}`;
+            div.innerHTML = `<div class="font-bold text-xs opacity-50 mb-1">${sender}</div><div>${msg}</div>`;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function handleEndCall() {
+            socket.emit('end-call', { to: targetId });
+            terminateSession();
+        }
+
+        socket.on('end-call', () => {
+            terminateSession();
+        });
+
+        function terminateSession() {
+            if (peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+            }
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+            }
+            document.getElementById('chat-messages').innerHTML = '';
+            showView('lobby');
+        }
+
+        document.getElementById('chat-input').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendChat();
+        });
+    </script>
+</body>
+</html>
