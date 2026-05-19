@@ -1,0 +1,49 @@
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const path = require('path');
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
+
+app.use(express.static(path.join(__dirname)));
+
+const users = new Map();
+
+io.on('connection', (socket) => {
+    socket.on('join', (username) => {
+        users.set(socket.id, username);
+        io.emit('user-list', Array.from(users.entries()));
+    });
+
+    socket.on('request-call', ({ to, fromName }) => {
+        io.to(to).emit('incoming-call', { from: socket.id, fromName });
+    });
+
+    socket.on('accept-call', ({ to }) => {
+        io.to(to).emit('call-accepted', { from: socket.id });
+    });
+
+    socket.on('signal', ({ to, signal }) => {
+        io.to(to).emit('signal', { from: socket.id, signal });
+    });
+
+    socket.on('chat-msg', ({ to, msg, sender }) => {
+        io.to(to).emit('chat-msg', { msg, sender });
+    });
+
+    socket.on('end-call', ({ to }) => {
+        io.to(to).emit('end-call');
+    });
+
+    socket.on('disconnect', () => {
+        users.delete(socket.id);
+        io.emit('user-list', Array.from(users.entries()));
+    });
+});
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`Server active on port ${PORT}`);
+});
